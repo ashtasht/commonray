@@ -1,0 +1,2 @@
+163680 242723 1627340664521172098 d2eb26b28b2e5f45f670b07b5e6fdfd6 /home/anon/Desktop/Projects/zig_ray/zig-cache/o/a50357335961677f11e0b050cb594307/zig_ray.o
+50802 242706 1627340663566154365 a33dbc8a710065f358fe7dfc9f9cdbb2 /home/anon/.cache/zig/o/97f2111bcc1d5b78ea2d87dc3d017ae9/libcompiler_rt.a

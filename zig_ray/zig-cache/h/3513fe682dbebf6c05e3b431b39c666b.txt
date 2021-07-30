@@ -1,0 +1,2 @@
+4202960 227461 1627294287877730150 9a1acf0dc244a3ec681e855a946c3ff4 /home/anon/Desktop/Projects/zig_ray/zig-cache/o/6151373d2d52532eab491e45eaf19edf/build.o
+50842 207137 1627218680009054405 d717b0395e5c9ffe2885adbea78f55f9 /home/anon/.cache/zig/o/3d77c8f3c6f2d23cdbd6570ef9929dcb/libcompiler_rt.a

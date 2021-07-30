@@ -1,0 +1,2 @@
+901232 227484 1627337576532230443 81eda62967c6a66a6acd15a23112a6ab /home/anon/Desktop/Projects/zig_ray/zig-cache/o/b1d5b4ad60ebaa68f6f58aa07d3596a9/zig_ray.o
+50906 207172 1627218685220150158 78dad8979ed96d2548d1418da4e2c0fa /home/anon/.cache/zig/o/7fafe3fc67652e63978f15f34502ef71/libcompiler_rt.a
