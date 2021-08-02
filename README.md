@@ -1,2 +1,2 @@
 # commonray
-A distributed, ray-marching-based ray-tracing library written in Zig
+A distributed, ray-marching-based ray-tracing demo written in Zig

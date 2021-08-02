@@ -1,2 +1,0 @@
-901704 247702 1627371858804789038 a876e9d62cbe73d001f051fd55d6b5ec /home/anon/Desktop/Projects/zig_ray/zig-cache/o/bf9476d3bd402c08df4f184bb898fff2/zig_ray.o
-50906 247676 1627367883827361553 91bafddd7a9ace9367dfb2710c60e3c6 /home/anon/.cache/zig/o/01bebb813e893e202217c33a77c9b537/libcompiler_rt.a
