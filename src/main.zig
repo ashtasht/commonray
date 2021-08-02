@@ -4,6 +4,7 @@ const c = @cImport({
     @cInclude("SDL2/SDL.h");
 });
 
+
 /// the size of the view; pixels
 const size_view = [2]comptime_int { 640, 480, };
 
@@ -14,7 +15,7 @@ const window_title = "zig_ray";
 const mouse_sensitivity: comptime_float = 0.001;
 
 /// the maximum distance for a hit; less is more precise; space units
-const hit_threshold: f32 = 0.01;
+const epsilon: f32 = 0.01;
 
 
 /// error when initialising SDL2
@@ -96,7 +97,7 @@ const camera_t = struct {
 /// a type for all the objects in space
 const space_t = struct {
     /// a list of all the objects to render
-    objects: [2]object_t, //TODO do not specify 2 here, this should be dynamic!
+    objects: [4]object_t, //TODO do not specify 2 here, this should be dynamic!
 
     /// the camera location
     camera: camera_t,
@@ -109,53 +110,83 @@ const space_t = struct {
 };
 
 // TODO document...
-const delta: f32 = -0.0001;
+const delta: f32 = 0.0015625; // TODO this should be a constant
 fn normal(ray: ray_t, object: object_t) triple_t {
+    const a = object.sdf(ray.origin);
     var n = triple_t {
-        object.sdf(triple_t { ray.origin[0] + delta, ray.origin[1], ray.origin[2] }) - object.sdf(triple_t { ray.origin[0] - delta, ray.origin[1], ray.origin[2] }),
-        object.sdf(triple_t { ray.origin[0], ray.origin[1] + delta, ray.origin[2] }) - object.sdf(triple_t { ray.origin[0], ray.origin[1] - delta, ray.origin[2] }),
-        object.sdf(triple_t { ray.origin[0], ray.origin[1], ray.origin[2] + delta }) - object.sdf(triple_t { ray.origin[0], ray.origin[1], ray.origin[2] - delta }),
+        object.sdf(triple_t { ray.origin[0] + delta, ray.origin[1], ray.origin[2] }) - a,
+        object.sdf(triple_t { ray.origin[0], ray.origin[1] + delta, ray.origin[2] }) - a,
+        object.sdf(triple_t { ray.origin[0], ray.origin[1], ray.origin[2] + delta }) - a,
     };
     n = n / @splat(3, magnitude(n,),);
     return n;
 }
 
-// TODO actually trace the ray, it's not just ray-casting after all...
+// TODO pre-calculate the space-SDF around specific points in 3D space, for use as a "cache"
+// TODO profiling, just profile everything
+
+/// marches a ray with its direction until an object is hit, or the boundries are reached
+///
+/// ray: the ray to march, the function will update its origin
+/// space: the space to march the ray in
+///
+/// returns a pointer to the object that was hit, or null in case the boundries were reached
+fn march_ray(ray: *ray_t, space: *space_t) ?*object_t {
+    // while the ray is within the boundries
+    while (@reduce(.Max, @fabs(ray.origin)) < space.dis_boundries) {
+        // calculate the SDF for all the objects in space
+        var distances: [space.objects.len]f32 = undefined;
+
+        for (space.objects) |obj, i| {
+            distances[i] = obj.sdf(ray.origin);
+        }
+
+        var distance_min: f32 = std.math.inf(f32);
+        for (distances) |distance| {
+            distance_min = std.math.min(distance_min, distance);
+        }
+
+        // check for a hit
+        if (distance_min < epsilon) {
+            for (distances) |distance, i| {
+                if (distance == distance_min) {
+                    return &space.objects[i];
+                }
+            }
+        }
+
+        // step
+        ray.origin += @splat(3, distance_min) * ray.direction;
+    }
+
+    return null;
+}
+
 /// traces a single ray through space and returns its colour
 /// 
 /// ray: the ray to trace
 /// space: the space to trace the ray i
-fn march_single(ray: ray_t, space: *space_t) colour_t {
+///
+/// the resulting colour of the ray
+fn trace_ray(ray: ray_t, space: *space_t) colour_t {
+    const max_hits = 4;
     var ray_ = ray;
+    var no_hits: u8 = 0;
+    var sum_colour = space.colour_boundries;
 
-    // while the ray is within the boundries
-    while (@reduce(.Max, @fabs(ray_.origin)) < space.dis_boundries) {
-        var distances: std.meta.Vector(space.objects.len, f32,) = undefined;
+    while (no_hits < max_hits) {
+        no_hits += 1;
 
-        for (space.objects) |obj, i| {
-            distances[i] = obj.sdf(ray_.origin);
-        }
-
-        const distance_min = @reduce(.Min, distances);
-
-        if (distance_min < hit_threshold) {
-            var i: u8 = 0;
-            while (distances[i] != distance_min) {
-                i += 1;
-            }
-            //return space.objects[i].matireal.colour;
-            const foo: triple_t = (normal(ray_, space.objects[i]));
-            return colour_t {
-                @floatToInt(u8, 127 + 127 * foo[0]),
-                @floatToInt(u8, 127 + 127 * foo[1]),
-                @floatToInt(u8, 127 + 127 * foo[2]),
-            };
-        }
-
-        ray_.origin += @splat(3, distance_min) * ray_.direction;
+        const obj = march_ray(&ray_, space) orelse break;
+        sum_colour += obj.matireal.colour / @splat(3, @as(u8, 4));
+        
+        ray_.direction = unit_sphere(
+            sphere_angles(ray_.direction) - sphere_angles(normal(ray_, obj.*))
+        );
+        ray_.origin += @splat(3, epsilon) * ray_.direction;
     }
 
-    return space.colour_boundries;
+    return sum_colour;
 }
 
 /// renders a scene into a buffer
@@ -184,7 +215,7 @@ fn ray_march(
                 .direction = unit_sphere(ray_angles),
             };
 
-            buffer[size_view[0] * y + x] = march_single(ray, space,);
+            buffer[size_view[0] * y + x] = trace_ray(ray, space,);
 
             x += 1;
         }
@@ -341,13 +372,27 @@ fn unit_sphere(angles: couple_t) triple_t {
     return triple_t { xy[0], xy[1], z, };
 }
 
+// TODO organise the order of the funcions and such...
+
+//TODO add comma (,) after each parameter in every function..
+
+// TODO document...
+fn sphere_angles(coordinates: triple_t,) couple_t {
+    return couple_t {
+        std.math.asin(coordinates[0],),
+        std.math.asin(coordinates[1],),
+    };
+}
+
 pub fn main() anyerror!void {
     var obj_a = object_t {
         .sdf = struct {
             fn f (origin: triple_t) f32 {
                 var a = origin;
-                a[2] -= 10;
-                return magnitude(a) - 2;
+                a[0] += 3;
+                a[1] += 1.5;
+                a[2] -= 5;
+                return magnitude(a) - 1;
             }
         }.f,
         .matireal = matireal_t {
@@ -358,7 +403,7 @@ pub fn main() anyerror!void {
         .sdf = struct {
             fn f (origin: triple_t) f32 {
                 var a = origin;
-                a[2] -= 5;
+                a[0] -= 5;
 
                 var q = @fabs(a) - @splat(3, @as(f32, 1.5));
                 return magnitude(triple_t {
@@ -372,11 +417,51 @@ pub fn main() anyerror!void {
             .colour = colour_t { 0x00, 0xFF, 0x00, },
         },
     };
+    var obj_c = object_t {
+        .sdf = struct {
+            fn f (origin: triple_t) f32 {
+                var a = origin;
+                a[2] -= 3;
+                var b = std.math.hypot(f32, a[0], a[1]) - 1;
+                return std.math.hypot(f32, b, a[2]) - 0.5;
+            }
+        }.f,
+        .matireal = matireal_t {
+            .colour = colour_t { 0x80, 0x10, 0xF0, },
+        },
+    };
+    var obj_d = object_t {
+        .sdf = struct {
+            fn f (origin: triple_t) f32 {
+                var o = origin * @splat(3, @as(f32, 3));
+
+                var b = @fabs(
+                    @reduce(.Add, @sin(o) * @cos(triple_t {
+                        o[2], o[0], o[1]
+                    }))
+                ) - 0.5;
+
+                var a = origin;
+                a[2] += 3;
+//                var q = @fabs(a) - @splat(3, @as(f32, 1.5));
+//                var d = magnitude(triple_t {
+//                    std.math.max(0, q[0],),
+//                    std.math.max(0, q[1],),
+//                    std.math.max(0, q[2],),
+//                }) + std.math.min(@reduce(.Max, q), 0);
+                var d = magnitude(a) - 1.5;
+                return std.math.max(d, b);
+            }
+        }.f,
+        .matireal = matireal_t {
+            .colour = colour_t { 0xFF, 0xFF, 0xFF, },
+        },
+    };
 
     var my_space = space_t {
         .camera = camera_t {},
-        .objects = [2]object_t { obj_a, obj_b, },
-        .colour_boundries = colour_t { 100, 100, 120, },
+        .objects = [4]object_t { obj_a, obj_b, obj_c, obj_d, },
+        .colour_boundries = colour_t { 0, 0, 0, },
     };
 
     try view_interactive(&my_space);
