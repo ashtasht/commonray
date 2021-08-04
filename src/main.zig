@@ -17,6 +17,9 @@ const mouse_sensitivity: comptime_float = 0.001;
 /// the maximum distance for a hit; less is more precise; space units
 const epsilon: f32 = 0.01;
 
+/// the delta for the normal estimation; less is more precise; space units
+const normal_delta: f32 = 0.01;
+
 
 /// error when initialising SDL2
 const sdl_init = error.Failed;
@@ -46,6 +49,21 @@ const sdl_wait_event = error.Failed;
 const sdl_mouse_mode = error.Failed;
 
 
+/// a type for all the objects in space
+const space_t = struct {
+    /// a list of all the objects to render
+    objects: [3]object_t, //TODO do not specify a no. here, this should be dynamic!
+
+    /// the camera location
+    camera: camera_t,
+
+    /// the colour of the boundries
+    colour_boundries: colour_t = colour_t { 0, 0, 0, },
+
+    /// the furthest point to render; the size of the rendered cube; space units
+    dis_boundries: f32 = 20,
+};
+
 /// an B.G.R. colour type
 const colour_t = std.meta.Vector(3, u8,);
 
@@ -63,7 +81,7 @@ const ray_t = struct {
     /// the current position of the ray; space units
     origin: triple_t,
 
-    /// the direction of the ray; coordinates on a unit sphere
+    /// the direction of the ray; unit vector //TODO maybe Quaternions are better suited than unit vectors?
     direction: triple_t,
 };
 
@@ -78,6 +96,9 @@ const object_t = struct {
     /// the object's signed distance function; space units
     sdf: fn (triple_t) f32,
 
+    /// the normal of the surface; coordinates on a unit sphere
+    normal: fn (triple_t) triple_t,
+
     /// the object's matireal
     matireal: matireal_t,
 };
@@ -87,41 +108,76 @@ const camera_t = struct {
     /// the position of the camera; space units
     position: triple_t = @splat(3, @as(f16, 0,),),
 
-    /// the rotation of the camera; radians
+    /// the rotation of the camera; radians // TODO are Euler angles really the best for this?
     rotation: couple_t = @splat(2, @as(f16, 0,),),
 
     /// how wide the view is; ratio between pixels and radians
     scale: f32 = 0.004,
 };
 
-/// a type for all the objects in space
-const space_t = struct {
-    /// a list of all the objects to render
-    objects: [4]object_t, //TODO do not specify 2 here, this should be dynamic!
 
-    /// the camera location
-    camera: camera_t,
+// TODO state that all the vectors are Cartesian
 
-    /// the colour of the boundries
-    colour_boundries: colour_t = colour_t { 0, 0, 0, },
-
-    /// the furthest point to render; the size of the rendered cube; space units
-    dis_boundries: f32 = 20,
-};
-
-// TODO document...
-const delta: f32 = 0.0015625; // TODO this should be a constant
-fn normal(ray: ray_t, object: object_t) triple_t {
-    const a = object.sdf(ray.origin);
-    var n = triple_t {
-        object.sdf(triple_t { ray.origin[0] + delta, ray.origin[1], ray.origin[2] }) - a,
-        object.sdf(triple_t { ray.origin[0], ray.origin[1] + delta, ray.origin[2] }) - a,
-        object.sdf(triple_t { ray.origin[0], ray.origin[1], ray.origin[2] + delta }) - a,
-    };
-    n = n / @splat(3, magnitude(n,),);
-    return n;
+/// calculates the norm of a vector
+///
+/// a: the vector to calculate the norm of; space units
+///
+/// returns the norm of the vector; space units
+fn norm(a: triple_t) f32 {
+    return std.math.hypot(f32, a[0], std.math.hypot(f32, a[1], a[2]));
 }
 
+// /// estimates the normal of an object given an S.D.F. and a position
+// ///
+// /// origin: the position to calculate the normal of
+// /// object: the object to calculate the normal of
+// ///
+// /// returns the normal as coordinates on a unit sphere
+// fn estimate_normal(origin: triple_t, sdf: fn(triple_t) triple_t) triple_t {
+//     const a = object.sdf(origin);
+// 
+//     var n = triple_t {
+//         sdf(triple_t { origin[0] + normal_delta, origin[1], origin[2] }) - a,
+//         sdf(triple_t { origin[0], origin[1] + normal_delta, origin[2] }) - a,
+//         sdf(triple_t { origin[0], origin[1], origin[2] + normal_delta }) - a,
+//     };
+//     n = n / @splat(3, norm(n,),);
+// 
+//     return n;
+// }
+
+/// estimates the normal of an object given an S.D.F. and a position
+///
+/// origin: the position to calculate the normal of
+/// object: the object to calculate the normal of
+///
+/// returns the normal as coordinates on a unit sphere
+fn estimate_normal(comptime sdf: fn(triple_t) f32) fn (origin: triple_t) triple_t {
+    return struct {
+        fn f(origin: triple_t) triple_t {
+            const a = sdf(origin);
+
+            var n = triple_t {
+                sdf(triple_t { origin[0] + normal_delta, origin[1], origin[2] }) - a,
+                sdf(triple_t { origin[0], origin[1] + normal_delta, origin[2] }) - a,
+                sdf(triple_t { origin[0], origin[1], origin[2] + normal_delta }) - a,
+            };
+            n = n / @splat(3, norm(n,),);
+
+            return n;
+        }
+    }.f;
+}
+
+/// converts Euler angles to unit vectors
+///
+/// a: the x and y Euler angles to represent; radians
+//TODO add assertions
+fn unit_vector(a: couple_t) triple_t {
+    var xy = @sin(a,);
+    var z = @reduce(.Mul, @cos(a,),);
+    return triple_t { xy[0], xy[1], z, };
+}
 // TODO pre-calculate the space-SDF around specific points in 3D space, for use as a "cache"
 // TODO profiling, just profile everything
 
@@ -162,6 +218,15 @@ fn march_ray(ray: *ray_t, space: *space_t) ?*object_t {
     return null;
 }
 
+// TODO document...
+// TODO rename to direction
+fn sphere_angles(coordinates: triple_t,) couple_t {
+    return couple_t {
+        std.math.asin(coordinates[0],),
+        std.math.asin(coordinates[1],),
+    };
+}
+
 /// traces a single ray through space and returns its colour
 /// 
 /// ray: the ray to trace
@@ -180,8 +245,8 @@ fn trace_ray(ray: ray_t, space: *space_t) colour_t {
         const obj = march_ray(&ray_, space) orelse break;
         sum_colour += obj.matireal.colour / @splat(3, @as(u8, 4));
         
-        ray_.direction = unit_sphere(
-            sphere_angles(ray_.direction) - sphere_angles(normal(ray_, obj.*))
+        ray_.direction = unit_vector(
+            sphere_angles(ray_.direction) - sphere_angles(obj.normal(ray_.origin))
         );
         ray_.origin += @splat(3, epsilon) * ray_.direction;
     }
@@ -212,7 +277,7 @@ fn ray_march(
 
             var ray = ray_t {
                 .origin = camera.position,
-                .direction = unit_sphere(ray_angles),
+                .direction = unit_vector(ray_angles),
             };
 
             buffer[size_view[0] * y + x] = trace_ray(ray, space,);
@@ -223,12 +288,22 @@ fn ray_march(
     }
 }
 
+
+
+// TODO organise the order of the funcions and such...
+
+//TODO add comma (,) after each parameter in every function..
+
+
+
 /// creates an interactive view window using SDL2
 ///
 /// space: the space to present
-pub fn view_interactive(
-    space: *space_t,
-) !void {
+pub fn view_interactive(space: *space_t,) !void {
+    //TODO special config option for tracy
+    const t = tracy.trace(@src());
+    defer t.end();
+
     // initialise SDL
     if (c.SDL_Init(c.SDL_INIT_VIDEO,) != 0) {
         std.log.err("{s}", .{ c.SDL_GetError(), },);
@@ -320,17 +395,17 @@ pub fn view_interactive(
         var state_keys = c.SDL_GetKeyboardState(null);
 
         if (state_keys[c.SDL_SCANCODE_W] == 1) {
-            camera.position += unit_sphere(camera.rotation,);
+            camera.position += unit_vector(camera.rotation,);
         } else if (state_keys[c.SDL_SCANCODE_A] == 1) {
             var a = camera.rotation;
             a[0] -= std.math.pi / 2.0;
-            camera.position += unit_sphere(a,);
+            camera.position += unit_vector(a,);
         } else if (state_keys[c.SDL_SCANCODE_S] == 1) {
-            camera.position -= unit_sphere(camera.rotation,);
+            camera.position -= unit_vector(camera.rotation,);
         } else if (state_keys[c.SDL_SCANCODE_D] == 1) {
             var a = camera.rotation;
             a[0] += std.math.pi / 2.0;
-            camera.position += unit_sphere(a,);
+            camera.position += unit_vector(a,);
         }
 
         // rotate the camera
@@ -360,39 +435,31 @@ pub fn view_interactive(
         c.SDL_RenderPresent(renderer,);
     }
 }
-
-
-/// represents a 3D angle as coordinates on a unit sphere
-///
-/// angles: the x and y angles to represent; radians
-//TODO add assertions
-fn unit_sphere(angles: couple_t) triple_t {
-    var xy = @sin(angles,);
-    var z = @reduce(.Mul, @cos(angles,),);
-    return triple_t { xy[0], xy[1], z, };
-}
-
-// TODO organise the order of the funcions and such...
-
-//TODO add comma (,) after each parameter in every function..
-
-// TODO document...
-fn sphere_angles(coordinates: triple_t,) couple_t {
-    return couple_t {
-        std.math.asin(coordinates[0],),
-        std.math.asin(coordinates[1],),
-    };
-}
-
+//TODO
+    fn foo(origin: triple_t) f32 {
+        var a = origin;
+        a[2] -= 3;
+        var b = std.math.hypot(f32, a[0], a[1]) - 1;
+        return std.math.hypot(f32, b, a[2]) - 0.5;
+    }
 pub fn main() anyerror!void {
     var obj_a = object_t {
         .sdf = struct {
-            fn f (origin: triple_t) f32 {
+            fn f(origin: triple_t,) f32 {
                 var a = origin;
                 a[0] += 3;
                 a[1] += 1.5;
                 a[2] -= 5;
-                return magnitude(a) - 1;
+                return norm(a,) - 1;
+            }
+        }.f,
+        .normal = struct {
+            fn f(origin: triple_t,) triple_t {
+                var a = origin;
+                a[0] -= 3;
+                a[1] -= 1.5;
+                a[2] += 5;
+                return a / @splat(3, norm(a,),);
             }
         }.f,
         .matireal = matireal_t {
@@ -401,16 +468,34 @@ pub fn main() anyerror!void {
     };
     var obj_b = object_t {
         .sdf = struct {
-            fn f (origin: triple_t) f32 {
+            fn f(origin: triple_t) f32 {
                 var a = origin;
                 a[0] -= 5;
 
                 var q = @fabs(a) - @splat(3, @as(f32, 1.5));
-                return magnitude(triple_t {
+                return norm(triple_t {
                     std.math.max(0, q[0],),
                     std.math.max(0, q[1],),
                     std.math.max(0, q[2],),
                 }) + std.math.min(@reduce(.Max, q), 0);
+            }
+        }.f,
+        .normal = struct {
+            fn f(origin: triple_t) triple_t {
+                var a = [_]f32 { origin[0], origin[1], origin[2], };
+                a[0] -= 5;
+
+                var b: triple_t = triple_t { 0, 0, 0 };
+
+                for (a) |v, i| {
+                    if (v <= -1.5) {
+                        b[i] = -1;
+                    } else if (v >= 1.5) {
+                        b[i] = 1;
+                    }
+                }
+
+                return b / @splat(3, norm(b,),);
             }
         }.f,
         .matireal = matireal_t {
@@ -418,55 +503,18 @@ pub fn main() anyerror!void {
         },
     };
     var obj_c = object_t {
-        .sdf = struct {
-            fn f (origin: triple_t) f32 {
-                var a = origin;
-                a[2] -= 3;
-                var b = std.math.hypot(f32, a[0], a[1]) - 1;
-                return std.math.hypot(f32, b, a[2]) - 0.5;
-            }
-        }.f,
+        .sdf = foo,
+        .normal = estimate_normal(foo),
         .matireal = matireal_t {
             .colour = colour_t { 0x80, 0x10, 0xF0, },
-        },
-    };
-    var obj_d = object_t {
-        .sdf = struct {
-            fn f (origin: triple_t) f32 {
-                var o = origin * @splat(3, @as(f32, 3));
-
-                var b = @fabs(
-                    @reduce(.Add, @sin(o) * @cos(triple_t {
-                        o[2], o[0], o[1]
-                    }))
-                ) - 0.5;
-
-                var a = origin;
-                a[2] += 3;
-//                var q = @fabs(a) - @splat(3, @as(f32, 1.5));
-//                var d = magnitude(triple_t {
-//                    std.math.max(0, q[0],),
-//                    std.math.max(0, q[1],),
-//                    std.math.max(0, q[2],),
-//                }) + std.math.min(@reduce(.Max, q), 0);
-                var d = magnitude(a) - 1.5;
-                return std.math.max(d, b);
-            }
-        }.f,
-        .matireal = matireal_t {
-            .colour = colour_t { 0xFF, 0xFF, 0xFF, },
         },
     };
 
     var my_space = space_t {
         .camera = camera_t {},
-        .objects = [4]object_t { obj_a, obj_b, obj_c, obj_d, },
+        .objects = [3]object_t { obj_a, obj_b, obj_c, },
         .colour_boundries = colour_t { 0, 0, 0, },
     };
 
     try view_interactive(&my_space);
-}
-
-fn magnitude(a: triple_t) f32 {
-    return std.math.hypot(f32, a[0], std.math.hypot(f32, a[1], a[2]));
 }
